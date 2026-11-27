@@ -77,6 +77,12 @@ describe('Syntax Highlighting Performance', () => {
       themes: ['dark-plus'],
       langs: ['typescript'],
     });
+
+    // Warm up lazy grammar and rendering paths before steady-state benchmarks.
+    highlighter.codeToHtml(SAMPLE_CODE, {
+      lang: 'typescript',
+      theme: 'dark-plus',
+    });
   });
 
   describe('Shiki Highlighting', () => {

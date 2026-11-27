@@ -1,138 +1,312 @@
 /**
  * Bundle Size Analyzer
- * Check bundle sizes against performance budgets
+ * Uses Vite's production manifest.
+ * Never reports an unverified category as measured.
  */
 
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
-import { gzipSync } from 'zlib';
+import {
+  existsSync,
+  readFileSync,
+} from 'node:fs';
+import {
+  join,
+  resolve,
+  sep,
+} from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const BUILD_DIR = join(process.cwd(), 'build', 'client');
+const MANIFEST_FILE = join(BUILD_DIR, '.vite', 'manifest.json');
 const BUDGETS_FILE = join(process.cwd(), '.performance-budgets.json');
 
-function getFileSize(filePath) {
+const REQUIRED_BUDGETS = [
+  'main-bundle',
+  'vendor-bundle',
+  'webcontainer-api',
+];
+
+const JS_PATTERN = /\.m?js$/i;
+
+export function getFileSize(filePath) {
   const content = readFileSync(filePath);
-  const gzipped = gzipSync(content);
   return {
     raw: content.length,
-    gzipped: gzipped.length,
+    gzipped: gzipSync(content).length,
   };
 }
 
-function analyzeDirectory(dir, pattern = /\.js$/) {
-  const files = readdirSync(dir, { recursive: true });
-  const results = [];
+export function formatSize(bytes) {
+  return `${(bytes / 1024).toFixed(2)} KB`;
+}
 
-  files.forEach((file) => {
-    const filePath = join(dir, file);
-    const stats = statSync(filePath);
+function isJavaScriptFile(file) {
+  return typeof file === 'string' && JS_PATTERN.test(file);
+}
 
-    if (stats.isFile() && pattern.test(file)) {
-      const size = getFileSize(filePath);
-      results.push({
-        name: file,
-        path: filePath,
+function getManifestFilePath(buildDir, file) {
+  const root = resolve(buildDir);
+  const target = resolve(root, file);
+
+  if (!target.startsWith(`${root}${sep}`)) {
+    throw new Error(`Manifest file escapes build directory: ${file}`);
+  }
+
+  return target;
+}
+
+function getEntryIdentity(key, entry) {
+  return [
+    key,
+    entry.src,
+    entry.name,
+    entry.file,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function classifyManifestEntry(key, entry) {
+  // Only the manifest entry point is measured.
+  // Vendor and WebContainer require verified chunk-level evidence.
+  if (entry.isEntry === true) {
+    return 'main-bundle';
+  }
+
+  return null;
+}
+
+export function analyzeManifest(manifest, buildDir) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error('Invalid Vite manifest: expected an object');
+  }
+
+  const entries = Object.entries(manifest).filter(
+    ([, entry]) =>
+      entry &&
+      typeof entry === 'object' &&
+      isJavaScriptFile(entry.file),
+  );
+
+  if (entries.length === 0) {
+    throw new Error('Manifest contains no JavaScript bundle entries');
+  }
+
+  const mainEntries = entries.filter(([, entry]) => entry.isEntry === true);
+
+  const measurements = Object.fromEntries(
+    REQUIRED_BUDGETS.map((name) => [name, null]),
+  );
+
+  const unmatchedBundles = [];
+  const assignedFiles = new Map();
+
+  for (const [key, entry] of entries) {
+    const category = classifyManifestEntry(key, entry);
+
+    if (!category) {
+      unmatchedBundles.push(entry.file);
+      continue;
+    }
+
+    if (category === 'main-bundle' && mainEntries.length !== 1) {
+      unmatchedBundles.push(entry.file);
+      continue;
+    }
+
+    const previousCategory = assignedFiles.get(entry.file);
+
+    if (previousCategory) {
+      throw new Error(
+        `Bundle assigned more than once: ${entry.file} (${previousCategory}, ${category})`,
+      );
+    }
+
+    const filePath = getManifestFilePath(buildDir, entry.file);
+
+    if (!existsSync(filePath)) {
+      throw new Error(`Manifest references missing bundle: ${entry.file}`);
+    }
+
+    const size = getFileSize(filePath);
+
+    assignedFiles.set(entry.file, category);
+
+    if (!measurements[category]) {
+      measurements[category] = {
+        bundle: entry.file,
         ...size,
-      });
+      };
+    } else {
+      // Multiple chunks in one category are aggregated without duplication.
+      measurements[category].raw += size.raw;
+      measurements[category].gzipped += size.gzipped;
+      measurements[category].bundle += `, ${entry.file}`;
     }
+  }
+
+  return {
+    measurements,
+    unmatchedBundles: [...new Set(unmatchedBundles)],
+    manifestJavaScriptFiles: entries.map(([, entry]) => entry.file),
+  };
+}
+
+export function checkAgainstBudgets(analysis, budgets) {
+  const bundleBudgets = budgets?.budgets?.['bundle-size'];
+
+  if (!bundleBudgets || typeof bundleBudgets !== 'object') {
+    throw new Error('Missing bundle-size budget configuration');
+  }
+
+  const results = REQUIRED_BUDGETS.map((name) => {
+    const budgetEntry = bundleBudgets[name];
+    const measurement = analysis.measurements[name];
+
+    if (
+      !budgetEntry ||
+      typeof budgetEntry.budget !== 'number' ||
+      !Number.isFinite(budgetEntry.budget) ||
+      budgetEntry.budget <= 0
+    ) {
+      throw new Error(`Invalid or missing budget: ${name}`);
+    }
+
+    if (!measurement) {
+      return {
+        budgetName: name,
+        status: 'NOT MEASURED',
+        measured: false,
+        withinBudget: false,
+        size: null,
+        budget: budgetEntry.budget,
+        unit: budgetEntry.unit,
+      };
+    }
+
+    const sizeKB = measurement.gzipped / 1024;
+
+    return {
+      budgetName: name,
+      status: sizeKB <= budgetEntry.budget ? 'PASS' : 'FAIL',
+      measured: true,
+      withinBudget: sizeKB <= budgetEntry.budget,
+      bundle: measurement.bundle,
+      size: sizeKB,
+      budget: budgetEntry.budget,
+      unit: budgetEntry.unit,
+      difference: sizeKB - budgetEntry.budget,
+    };
   });
 
-  return results;
+  const failures = results.filter(
+    (result) => !result.measured || !result.withinBudget,
+  );
+
+  return {
+    results,
+    failures,
+    success:
+      failures.length === 0 &&
+      analysis.unmatchedBundles.length === 0,
+  };
 }
 
-function formatSize(bytes) {
-  return (bytes / 1024).toFixed(2) + ' KB';
-}
-
-function checkAgainstBudgets(bundles, budgets) {
-  const results = [];
-
-  bundles.forEach((bundle) => {
-    const sizeKB = bundle.gzipped / 1024;
-    let budget = null;
-    let budgetName = null;
-
-    // Try to match bundle to a budget
-    if (bundle.name.includes('index')) {
-      budget = budgets.budgets['bundle-size']['main-bundle'];
-      budgetName = 'main-bundle';
-    } else if (bundle.name.includes('vendor') || bundle.name.includes('node_modules')) {
-      budget = budgets.budgets['bundle-size']['vendor-bundle'];
-      budgetName = 'vendor-bundle';
-    } else if (bundle.name.includes('webcontainer')) {
-      budget = budgets.budgets['bundle-size']['webcontainer-api'];
-      budgetName = 'webcontainer-api';
-    }
-
-    if (budget) {
-      const withinBudget = sizeKB <= budget.budget;
-      results.push({
-        bundle: bundle.name,
-        size: sizeKB,
-        budget: budget.budget,
-        budgetName,
-        withinBudget,
-        difference: sizeKB - budget.budget,
-      });
-    }
-  });
-
-  return results;
-}
-
-function generateReport() {
-  console.log('\n=== Bundle Size Analysis ===\n');
+export function generateReport({
+  buildDir = BUILD_DIR,
+  manifestFile = join(buildDir, '.vite', 'manifest.json'),
+  budgetsFile = BUDGETS_FILE,
+  logger = console,
+} = {}) {
+  logger.log('\n=== Manifest-Based Bundle Analysis ===\n');
 
   try {
-    const bundles = analyzeDirectory(BUILD_DIR);
-    const budgets = JSON.parse(readFileSync(BUDGETS_FILE, 'utf-8'));
+    if (!existsSync(manifestFile)) {
+      throw new Error(`Vite manifest not found: ${manifestFile}`);
+    }
 
-    // Sort by size
-    bundles.sort((a, b) => b.gzipped - a.gzipped);
+    if (!existsSync(budgetsFile)) {
+      throw new Error(`Performance budgets file not found: ${budgetsFile}`);
+    }
 
-    console.log('All JavaScript Bundles:');
-    console.log(''.padEnd(60, '-'));
-    bundles.forEach((bundle) => {
-      const name = bundle.name.padEnd(40);
-      const size = formatSize(bundle.gzipped).padStart(12);
-      console.log(`${name} ${size}`);
-    });
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    const budgets = JSON.parse(readFileSync(budgetsFile, 'utf8'));
 
-    console.log('\nTotal:');
-    const totalGzipped = bundles.reduce((sum, b) => sum + b.gzipped, 0);
-    console.log(`${formatSize(totalGzipped)} (gzipped)`);
+    const analysis = analyzeManifest(manifest, buildDir);
+    const compliance = checkAgainstBudgets(analysis, budgets);
 
-    // Check against budgets
-    console.log('\n=== Budget Compliance ===\n');
-    const budgetResults = checkAgainstBudgets(bundles, budgets);
+    logger.log('=== Required Budget Measurements ===');
 
-    if (budgetResults.length === 0) {
-      console.log('⚠️  No budgets matched to bundles');
-    } else {
-      budgetResults.forEach((result) => {
-        const status = result.withinBudget ? '✅' : '❌';
-        const diff = result.withinBudget
-          ? `(${formatSize(result.budget * 1024 - result.size * 1024)} under budget)`
-          : `(${formatSize(result.difference * 1024)} over budget)`;
+    for (const result of compliance.results) {
+      if (!result.measured) {
+        logger.error(`NOT MEASURED: ${result.budgetName}`);
+        continue;
+      }
 
-        console.log(
-          `${status} ${result.budgetName}: ${formatSize(result.size * 1024)} / ${formatSize(result.budget * 1024)} ${diff}`,
+      const status = result.withinBudget ? 'PASS' : 'FAIL';
+
+      logger.log(
+        `${status}: ${result.budgetName}: ${formatSize(result.size * 1024)} / ${result.budget} KB`,
+      );
+
+      if (!result.withinBudget) {
+        logger.error(
+          `Exceeded by ${formatSize(result.difference * 1024)}`,
         );
-      });
-
-      const failures = budgetResults.filter((r) => !r.withinBudget);
-      if (failures.length > 0) {
-        console.log(`\n❌ ${failures.length} bundle(s) exceeded budget`);
-        process.exit(1);
-      } else {
-        console.log('\n✅ All bundles within budget');
       }
     }
+
+    if (analysis.unmatchedBundles.length > 0) {
+      logger.error('\n=== Unclassified JavaScript Bundles ===');
+
+      for (const file of analysis.unmatchedBundles) {
+        logger.error(`NOT CLASSIFIED: ${file}`);
+      }
+    }
+
+    logger.log(
+      `\nManifest JavaScript files: ${analysis.manifestJavaScriptFiles.length}`,
+    );
+
+    logger.log(
+      `Unclassified files: ${analysis.unmatchedBundles.length}`,
+    );
+
+    if (compliance.success) {
+      logger.log('\nAll required bundle budgets were measured and passed.');
+    } else {
+      logger.error(
+        '\nBundle analysis failed: measurements are incomplete or exceeded budgets.',
+      );
+    }
+
+    return {
+      ...compliance,
+      unmatchedBundles: analysis.unmatchedBundles,
+      manifestJavaScriptFiles: analysis.manifestJavaScriptFiles,
+    };
   } catch (error) {
-    console.error('Error analyzing bundles:', error.message);
-    console.log('\n⚠️  Build directory may not exist. Run `pnpm run build` first.');
-    process.exit(1);
+    logger.error('Error analyzing bundles:', error.message);
+
+    return {
+      success: false,
+      error: error.message,
+      results: [],
+      failures: [],
+      unmatchedBundles: [],
+      manifestJavaScriptFiles: [],
+    };
   }
 }
 
-generateReport();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  const report = generateReport();
+
+  if (!report.success) {
+    process.exitCode = 1;
+  }
+}

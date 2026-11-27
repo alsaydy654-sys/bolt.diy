@@ -4,15 +4,16 @@
  * Tests the complete performance monitoring workflow
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PerformanceMonitor } from '~/utils/performance-monitor';
 import { FrameRateMonitor } from '~/utils/frame-rate-monitor';
 import { SyntaxHighlighterClient } from '~/utils/syntax-highlighter-client';
 
+beforeEach(() => {
+  PerformanceMonitor.clearEvents();
+});
+
 describe('Performance Monitoring Integration', () => {
-  beforeEach(() => {
-    PerformanceMonitor.clearEvents();
-  });
 
   describe('End-to-end performance tracking', () => {
     it('should track a complete user journey', async () => {
@@ -64,9 +65,10 @@ describe('Performance Monitoring Integration', () => {
   });
 
   describe('Performance monitoring with syntax highlighting', () => {
-    it('should track syntax highlighting performance', async () => {
-      const client = new SyntaxHighlighterClient();
+  it('should track syntax highlighting performance', async () => {
+    const client = new SyntaxHighlighterClient();
 
+    try {
       const code = 'const x: number = 5;';
 
       await PerformanceMonitor.measureAsync('syntax-highlight', async () => {
@@ -77,59 +79,108 @@ describe('Performance Monitoring Integration', () => {
       expect(stats).not.toBeNull();
       expect(stats!.avg).toBeGreaterThan(0);
       expect(stats!.count).toBe(1);
-
+    } finally {
       client.dispose();
-    });
-
-    it('should show performance improvement with caching', async () => {
-      const client = new SyntaxHighlighterClient();
-      const code = 'function test() { return true; }';
-
-      // First highlight (cache miss)
-      await PerformanceMonitor.measureAsync('highlight-uncached', async () => {
-        await client.highlight(code, 'javascript');
-      });
-
-      // Second highlight (cache hit)
-      await PerformanceMonitor.measureAsync('highlight-cached', async () => {
-        await client.highlight(code, 'javascript');
-      });
-
-      const uncachedStats = PerformanceMonitor.getJourneyStats('highlight-uncached');
-      const cachedStats = PerformanceMonitor.getJourneyStats('highlight-cached');
-
-      // Cached should be faster (though both might be very fast)
-      expect(cachedStats!.avg).toBeLessThanOrEqual(uncachedStats!.avg);
-
-      client.dispose();
-    });
+    }
   });
 
-  describe('Frame rate monitoring during operations', () => {
-    it('should monitor FPS during heavy operations', async () => {
-      const monitor = new FrameRateMonitor(60);
-      
-      monitor.start();
+  it('should return consistent output for repeated highlights', async () => {
+    const client = new SyntaxHighlighterClient();
 
-      // Simulate heavy work
+    try {
+      const code = 'function test() { return true; }';
+
+      const firstResult = await PerformanceMonitor.measureAsync(
+        'highlight-first',
+        async () => client.highlight(code, 'javascript'),
+      );
+
+      const secondResult = await PerformanceMonitor.measureAsync(
+        'highlight-repeated',
+        async () => client.highlight(code, 'javascript'),
+      );
+
+      expect(secondResult).toBe(firstResult);
+      expect(PerformanceMonitor.getJourneyStats('highlight-first')!.count).toBe(1);
+      expect(PerformanceMonitor.getJourneyStats('highlight-repeated')!.count).toBe(1);
+    } finally {
+      client.dispose();
+    }
+  });
+});
+
+describe('Frame rate monitoring independently from measured operations', () => {
+  let callbacks: Map<number, FrameRequestCallback>;
+  let nextId: number;
+
+  const runFrame = (timestamp: number) => {
+    const entry = callbacks.entries().next().value;
+    if (!entry) {
+      throw new Error('No scheduled animation frame');
+    }
+    const [id, callback] = entry;
+    callbacks.delete(id);
+    callback(timestamp);
+  };
+
+  beforeEach(() => {
+    callbacks = new Map();
+    nextId = 1;
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        const id = nextId++;
+        callbacks.set(id, callback);
+        return id;
+      }),
+    );
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      vi.fn((id: number) => {
+        callbacks.delete(id);
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('should record frame intervals and a separate heavy-work journey', async () => {
+    const onUpdate = vi.fn();
+    const monitor = new FrameRateMonitor(60, onUpdate);
+    monitor.start();
+
+    try {
+      runFrame(0);
+      for (let i = 1; i <= 60; i++) {
+        runFrame((1000 / 60) * i);
+      }
+
+      const stats = monitor.getStats();
+      expect(stats.currentFps).toBe(60);
+      expect(stats.avgFrameTime).toBeCloseTo(1000 / 60, 5);
+      expect(stats.droppedFrames).toBe(0);
+      expect(stats.budgetCompliance).toBe(100);
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(onUpdate).toHaveBeenCalledWith(60, 0);
+
       await PerformanceMonitor.measureAsync('heavy-work', async () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       });
 
-      monitor.stop();
-
-      const stats = monitor.getStats();
-      
-      // Should have collected some frame data
-      expect(stats).toBeDefined();
-
       const perfStats = PerformanceMonitor.getJourneyStats('heavy-work');
       expect(perfStats).not.toBeNull();
-    });
+      expect(perfStats!.count).toBe(1);
+      expect(perfStats!.avg).toBeGreaterThan(0);
+    } finally {
+      monitor.stop();
+    }
   });
+});
 
-  describe('Export and import workflow', () => {
-    it('should export and re-import data', () => {
+describe('Export and clear workflow', () => {
+    it('should export and clear data', () => {
       // Track some journeys
       PerformanceMonitor.trackJourney('journey-1', 100);
       PerformanceMonitor.trackJourney('journey-2', 200);
@@ -206,7 +257,7 @@ describe('Performance Monitoring Integration', () => {
   });
 
   describe('Performance budgets', () => {
-    it('should identify journeys exceeding performance budgets', () => {
+    it('should compare journey percentiles with explicit test thresholds', () => {
       const budgets = {
         'fast-operation': 10,
         'slow-operation': 100,

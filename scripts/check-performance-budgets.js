@@ -93,6 +93,16 @@ function runBudgetCheck(metrics) {
       const budgetEntry = budgets.budgets[category]?.[name];
       if (budgetEntry) {
         results.push(checkBudget(category, name, actual, budgetEntry.budget, budgetEntry.unit));
+      } else {
+        results.push({
+          passed: false,
+          category,
+          name,
+          actual,
+          budget: null,
+          unit: '',
+          message: `❌ ${category}/${name}: no matching performance budget found`,
+        });
       }
     });
   });

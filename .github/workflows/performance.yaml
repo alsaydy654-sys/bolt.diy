@@ -65,9 +65,11 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            
+
+
             let comment = '## 📊 Performance Report\n\n';
-            
+
+
             // Add performance test results
             comment += '### Performance Tests\n';
             if ('${{ steps.perf-tests.outcome }}' === 'success') {
@@ -75,30 +77,33 @@ jobs:
             } else {
               comment += '⚠️ Some performance tests failed - review the logs\n\n';
             }
-            
+
+
             // Add bundle analysis
             comment += '### Bundle Analysis\n';
             if ('${{ steps.bundle-analysis.outcome }}' === 'success') {
-              comment += '✅ All bundles within budget\n\n';
+              comment += '✅ All required bundle measurements completed and passed their budgets\n\n';
             } else {
-              comment += '❌ Some bundles exceeded budget - consider optimizing\n\n';
+              comment += '❌ Bundle analysis failed: measurements may be missing, bundles unclassified, or budgets exceeded. Review the logs.\n\n';
             }
-            
+
+
             comment += '### Quick Links\n';
-            comment += '- [Performance Documentation](../blob/main/PERFORMANCE.md)\n';
+            comment += '- [Performance Documentation](../blob/main/docs/PERFORMANCE_OPTIMIZATION.md)\n';
             comment += '- [Performance Budgets](../blob/main/.performance-budgets.json)\n';
-            
-            github.rest.issues.createComment({
+
+
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: comment
             });
 
-      - name: Fail if budgets exceeded
-        if: steps.bundle-analysis.outcome == 'failure'
+      - name: Fail if performance checks failed
+        if: steps.bundle-analysis.outcome == 'failure' || steps.perf-tests.outcome == 'failure'
         run: |
-          echo "::error::Bundle size budgets exceeded. See logs for details."
+          echo "::error::Performance tests or bundle analysis failed. See logs for details."
           exit 1
 
   lighthouse:
@@ -134,34 +139,3 @@ jobs:
         continue-on-error: true
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
-
-  track-regressions:
-    name: Track Performance Regressions
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [performance-tests]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Record baseline metrics
-        run: |
-          mkdir -p .performance-history
-          date=$(date +%Y-%m-%d)
-          echo "Recording baseline for $date"
-          # In a real implementation, you'd run tests and save results
-          # cp test-results.json .performance-history/$date.json
-
-      - name: Commit baseline if changed
-        run: |
-          git config user.name "Performance Bot"
-          git config user.email "perf-bot@bolt.diy"
-          git add .performance-history/ || true
-          git commit -m "chore: update performance baseline [skip ci]" || true
-          git push || true

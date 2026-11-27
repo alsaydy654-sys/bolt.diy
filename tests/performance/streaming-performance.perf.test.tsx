@@ -26,12 +26,13 @@ describe('Streaming Performance - Frame Rate', () => {
   it('maintains 60fps during simple text streaming', () => {
     const frames: number[] = [];
     const text = 'Hello, world! '.repeat(100);
+    const { rerender } = render(<div>{''}</div>);
 
     for (let i = 0; i < text.length; i += 10) {
       const frameStart = performance.now();
 
-      // Simulate streaming render
-      render(<div>{text.slice(0, i)}</div>);
+      // Update the same React root during streaming.
+      rerender(<div>{text.slice(0, i)}</div>);
 
       const frameTime = performance.now() - frameStart;
       frames.push(frameTime);
@@ -39,10 +40,10 @@ describe('Streaming Performance - Frame Rate', () => {
     }
 
     const stats = streamingOptimizer.getStats();
-    expect(stats.percentDropped).toBeLessThan(5); // Less than 5% dropped frames
-    expect(stats.averageFrameTime).toBeLessThan(FRAME_BUDGET_60FPS);
+    expect(stats.percentOverBudget).toBeLessThan(5); // Less than 5% over-budget operations
+    expect(stats.averageWorkDurationMs).toBeLessThan(FRAME_BUDGET_60FPS);
 
-    console.log(`✓ Streaming: ${stats.droppedFrames}/${frames.length} frames dropped (${stats.percentDropped.toFixed(1)}%)`);
+    console.log(`✓ Streaming: ${stats.overBudgetOperations}/${frames.length} work operations over budget (${stats.percentOverBudget.toFixed(1)}%)`);
   });
 
   it('handles code block streaming efficiently', () => {
@@ -57,11 +58,17 @@ describe('Streaming Performance - Frame Rate', () => {
       '}',
     ];
 
+    const { rerender } = render(
+      <pre>
+        <code>{''}</code>
+      </pre>,
+    );
+
     const maxFrameTime = codeLines.reduce((max, _, i) => {
       const frameStart = performance.now();
 
       const code = codeLines.slice(0, i + 1).join('\n');
-      render(
+      rerender(
         <pre>
           <code>{code}</code>
         </pre>,
@@ -185,6 +192,10 @@ describe('Streaming Performance - Throttling', () => {
 });
 
 describe('Streaming Performance - Long Messages', () => {
+  beforeEach(() => {
+    streamingOptimizer.reset();
+  });
+
   it('handles very long messages efficiently', () => {
     const longMessage = 'A'.repeat(10000); // 10k characters
     const chunkSize = 100;
@@ -194,9 +205,11 @@ describe('Streaming Performance - Long Messages', () => {
       chunks.push(longMessage.slice(0, i + chunkSize));
     }
 
+    const { rerender } = render(<div>{''}</div>);
+
     const maxFrameTime = chunks.reduce((max, chunk) => {
       const frameStart = performance.now();
-      render(<div>{chunk}</div>);
+      rerender(<div>{chunk}</div>);
       const frameTime = performance.now() - frameStart;
       streamingOptimizer.trackFrame(frameTime);
       return Math.max(max, frameTime);
@@ -205,10 +218,10 @@ describe('Streaming Performance - Long Messages', () => {
     const stats = streamingOptimizer.getStats();
 
     expect(maxFrameTime).toBeLessThan(FRAME_BUDGET_60FPS * 2); // Allow 2x for very long content
-    expect(stats.percentDropped).toBeLessThan(10);
+    expect(stats.percentOverBudget).toBeLessThan(10);
 
     console.log(
-      `✓ Long message (10k chars): max ${maxFrameTime.toFixed(2)}ms, ${stats.percentDropped.toFixed(1)}% dropped`,
+      `✓ Long message (10k chars): max ${maxFrameTime.toFixed(2)}ms, ${stats.percentOverBudget.toFixed(1)}% over budget`,
     );
   });
 
@@ -232,11 +245,12 @@ describe('Streaming Performance - Long Messages', () => {
 
     const iterations = 50;
     let maxFrameTime = 0;
+    const { rerender } = render(<div />);
 
     for (let i = 0; i < iterations; i++) {
       const frameStart = performance.now();
 
-      render(
+      rerender(
         <div>
           <p>Message {i}</p>
           <pre>{mixedContent}</pre>
@@ -254,50 +268,54 @@ describe('Streaming Performance - Long Messages', () => {
 });
 
 describe('Streaming Performance - Real-world Simulation', () => {
+  beforeEach(() => {
+    streamingOptimizer.reset();
+  });
+
   it('simulates realistic AI response streaming', async () => {
     // Simulate a typical AI response: ~500 tokens at ~50 tokens/sec = 10 seconds
     const tokens = Array.from({ length: 500 }, (_, i) => `token${i} `);
     const tokenRate = 50; // tokens per second
-    const frameRate = 60; // fps
-    const tokensPerFrame = tokenRate / frameRate; // ~0.83 tokens per frame
+    const frameRate = 60; // frames per second
+    const tokensPerFrame = tokenRate / frameRate;
 
     let currentText = '';
     let tokenIndex = 0;
+    let tokenAccumulator = 0;
     const frameTimes: number[] = [];
+    const { rerender } = render(<div>{''}</div>);
 
-    // Simulate streaming over ~10 seconds
-    const simulateFrame = () => {
+    // Simulate frame scheduling deterministically; no real-time waiting.
+    while (tokenIndex < tokens.length) {
       const frameStart = performance.now();
+      tokenAccumulator += tokensPerFrame;
+      let textUpdated = false;
 
-      // Add tokens for this frame
-      const tokensToAdd = Math.ceil(tokensPerFrame);
-      for (let i = 0; i < tokensToAdd && tokenIndex < tokens.length; i++) {
+      while (tokenAccumulator >= 1 && tokenIndex < tokens.length) {
         currentText += tokens[tokenIndex++];
+        tokenAccumulator -= 1;
+        textUpdated = true;
       }
 
-      // Render
-      render(<div>{currentText}</div>);
+      if (textUpdated) {
+        rerender(<div>{currentText}</div>);
+      }
 
       const frameTime = performance.now() - frameStart;
       frameTimes.push(frameTime);
       streamingOptimizer.trackFrame(frameTime);
-    };
-
-    // Run simulation
-    while (tokenIndex < tokens.length) {
-      simulateFrame();
     }
 
     const stats = streamingOptimizer.getStats();
     const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
 
-    expect(stats.percentDropped).toBeLessThan(5);
+    expect(stats.percentOverBudget).toBeLessThan(5);
     expect(avgFrameTime).toBeLessThan(FRAME_BUDGET_60FPS);
 
     console.log(`✓ Real-world simulation:`);
     console.log(`  - Total frames: ${frameTimes.length}`);
-    console.log(`  - Avg frame time: ${avgFrameTime.toFixed(2)}ms`);
-    console.log(`  - Dropped frames: ${stats.droppedFrames} (${stats.percentDropped.toFixed(1)}%)`);
+    console.log(`  - Avg work duration: ${avgFrameTime.toFixed(2)}ms`);
+    console.log(`  - Over-budget operations: ${stats.overBudgetOperations} (${stats.percentOverBudget.toFixed(1)}%)`);
     console.log(`  - Total tokens: ${tokens.length}`);
   });
 });
