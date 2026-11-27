@@ -18,16 +18,16 @@ export class FrameRateMonitor {
   private windowStart: number | null = null;
   private windowFrames = 0;
 
-  constructor(
-    targetFps: number = 60,
-    onUpdate?: (fps: number, droppedFrames: number) => void,
-  ) {
+  constructor(targetFps: number = 60, onUpdate?: (fps: number, droppedFrames: number) => void) {
     this.targetFps = targetFps;
     this.onUpdate = onUpdate;
   }
 
   start(): void {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      return;
+    }
+
     this.lifecycleVersion++;
 
     this.isRunning = true;
@@ -46,17 +46,19 @@ export class FrameRateMonitor {
   }
 
   getCurrentFps(): number {
-    if (this.frameHistory.length === 0) return 0;
+    if (this.frameHistory.length === 0) {
+      return 0;
+    }
 
-    const average =
-      this.frameHistory.reduce((a, b) => a + b, 0) /
-      this.frameHistory.length;
+    const average = this.frameHistory.reduce((a, b) => a + b, 0) / this.frameHistory.length;
 
     return average > 0 ? Math.round(1000 / average) : 0;
   }
 
   getFrameBudgetCompliance(): number {
-    if (this.frameHistory.length === 0) return 100;
+    if (this.frameHistory.length === 0) {
+      return 100;
+    }
 
     const budget = 1000 / this.targetFps;
     const inBudget = this.frameHistory.filter((time) => time <= budget + 0.01).length;
@@ -83,9 +85,7 @@ export class FrameRateMonitor {
       };
     }
 
-    const average =
-      this.frameHistory.reduce((a, b) => a + b, 0) /
-      this.frameHistory.length;
+    const average = this.frameHistory.reduce((a, b) => a + b, 0) / this.frameHistory.length;
 
     const budget = 1000 / this.targetFps;
 
@@ -107,14 +107,14 @@ export class FrameRateMonitor {
   }
 
   private measure = (timestamp?: number): void => {
-    if (!this.isRunning) return;
+    if (!this.isRunning) {
+      return;
+    }
+
     const lifecycleVersion = this.lifecycleVersion;
     this.rafId = null;
 
-    const now =
-      typeof timestamp === "number" && Number.isFinite(timestamp)
-        ? timestamp
-        : performance.now();
+    const now = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : performance.now();
 
     if (this.lastFrameTime === null) {
       this.lastFrameTime = now;
@@ -130,7 +130,6 @@ export class FrameRateMonitor {
         }
 
         this.windowFrames++;
-
       }
 
       this.lastFrameTime = now;
@@ -141,9 +140,9 @@ export class FrameRateMonitor {
       const fps = Math.round((this.windowFrames * 1000) / elapsed);
 
       const budget = 1000 / this.targetFps;
-      const droppedFrames = this.frameHistory.filter(
-        (time) => time > budget + 0.01,
-      ).length;
+
+      const droppedFrames = this.frameHistory.filter((time) => time > budget + 0.01).length;
+
       try {
         this.onUpdate?.(fps, droppedFrames);
       } finally {
@@ -153,15 +152,19 @@ export class FrameRateMonitor {
           this.scheduleFrame(lifecycleVersion);
         }
       }
+
       return;
-      }
+    }
 
     this.scheduleFrame(lifecycleVersion);
   };
 
   private scheduleFrame(lifecycleVersion: number): void {
     this.rafId = requestAnimationFrame((timestamp) => {
-      if (!this.isRunning || lifecycleVersion !== this.lifecycleVersion) return;
+      if (!this.isRunning || lifecycleVersion !== this.lifecycleVersion) {
+        return;
+      }
+
       this.measure(timestamp);
     });
   }

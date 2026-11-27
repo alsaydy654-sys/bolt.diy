@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { atom, map } from 'nanostores';
 import { describe, expect, it, vi } from 'vitest';
 import { FilesStore, type FileMap } from './files';

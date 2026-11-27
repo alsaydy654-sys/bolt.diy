@@ -72,18 +72,22 @@ class StreamingOptimizer {
     overBudgetOperations: number;
     averageWorkDurationMs: number;
     percentOverBudget: number;
+
     /** @deprecated Measures over-budget work operations, not dropped screen frames. */
     droppedFrames: number;
+
     /** @deprecated Average work-operation duration, not screen frame time. */
     averageFrameTime: number;
+
     /** @deprecated Percentage of work operations exceeding the budget, not dropped frames. */
     percentDropped: number;
   } {
     const overBudgetOperations = this._frameMetrics.filter((m) => m.didDrop).length;
+
     const averageWorkDurationMs =
       this._frameMetrics.reduce((sum, m) => sum + m.duration, 0) / this._frameMetrics.length || 0;
-    const percentOverBudget =
-      (overBudgetOperations / this._frameMetrics.length) * 100 || 0;
+
+    const percentOverBudget = (overBudgetOperations / this._frameMetrics.length) * 100 || 0;
 
     return {
       targetFPS: this._targetFPS,
@@ -96,6 +100,7 @@ class StreamingOptimizer {
       percentDropped: percentOverBudget,
     };
   }
+
   /**
    * Reset metrics
    */
@@ -146,17 +151,18 @@ export class BatchedDOMUpdater {
    */
   private _flush(): void {
     this._rafId = null;
-    if (this._isFlushing) return;
+
+    if (this._isFlushing) {
+      return;
+    }
 
     this._isFlushing = true;
+
     const frameStart = performance.now();
     const budget = streamingOptimizer.getRemainingBudget(0);
 
     try {
-      while (
-        this._pendingUpdates.length > 0 &&
-        performance.now() - frameStart < budget * 0.8
-      ) {
+      while (this._pendingUpdates.length > 0 && performance.now() - frameStart < budget * 0.8) {
         const update = this._pendingUpdates.shift()!;
         update();
       }
