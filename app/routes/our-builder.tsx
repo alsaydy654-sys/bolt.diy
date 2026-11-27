@@ -23,12 +23,22 @@ export default function OurBuilder() {
       setNotice('اكتب وصف المهمة أولاً.');
       return;
     }
+
     setSent(true);
     setNotice('تم تجهيز المهمة محلياً. اربطها بوكيل Arena عبر GitHub Branch / Pull Request قبل التنفيذ.');
   }
 
   return (
-    <main dir="rtl" style={{ minHeight: '100vh', background: '#0b1220', color: '#e8eef8', fontFamily: 'system-ui, sans-serif', padding: 'clamp(14px, 3vw, 32px)' }}>
+    <main
+      dir="rtl"
+      style={{
+        minHeight: '100vh',
+        background: '#0b1220',
+        color: '#e8eef8',
+        fontFamily: 'system-ui, sans-serif',
+        padding: 'clamp(14px, 3vw, 32px)',
+      }}
+    >
       <style>{`
         *{box-sizing:border-box} .our-wrap{max-width:1200px;margin:0 auto}
         .our-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
@@ -55,40 +65,145 @@ export default function OurBuilder() {
               ['projects', 'المشاريع'],
               ['agents', 'الوكلاء'],
               ['changes', 'التغييرات'],
-            ].map(([key, label]) => <button key={key} className={`our-btn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>{label}</button>)}
+            ].map(([key, label]) => (
+              <button key={key} className={`our-btn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
+                {label}
+              </button>
+            ))}
           </div>
         </header>
 
         <section className="our-grid" style={{ marginBottom: 18 }}>
-          <div className="our-panel"><div className="our-muted">المستودع المتصل</div><div style={{ fontWeight: 700, marginTop: 8 }}>alsaydy654-sys/bolt.diy</div><div className="our-muted" style={{ marginTop: 8 }}>GitHub · المصدر الأساسي</div></div>
-          <div className="our-panel"><div className="our-muted">فرع العمل</div><div style={{ fontWeight: 700, marginTop: 8, overflowWrap: 'anywhere' }}>feature/our-ai-builder-f0</div><div className="our-muted" style={{ marginTop: 8 }}>تطوير معزول عن main</div></div>
-          <div className="our-panel"><div className="our-muted">حالة F0</div><div style={{ fontWeight: 700, marginTop: 8, color: '#93c5fd' }}>وثيقة التأسيس محفوظة</div><div className="our-muted" style={{ marginTop: 8 }}>بانتظار تطوير F1</div></div>
+          <div className="our-panel">
+            <div className="our-muted">المستودع المتصل</div>
+            <div style={{ fontWeight: 700, marginTop: 8 }}>alsaydy654-sys/bolt.diy</div>
+            <div className="our-muted" style={{ marginTop: 8 }}>
+              GitHub · المصدر الأساسي
+            </div>
+          </div>
+          <div className="our-panel">
+            <div className="our-muted">فرع العمل</div>
+            <div style={{ fontWeight: 700, marginTop: 8, overflowWrap: 'anywhere' }}>feature/our-ai-builder-f0</div>
+            <div className="our-muted" style={{ marginTop: 8 }}>
+              تطوير معزول عن main
+            </div>
+          </div>
+          <div className="our-panel">
+            <div className="our-muted">حالة F0</div>
+            <div style={{ fontWeight: 700, marginTop: 8, color: '#93c5fd' }}>وثيقة التأسيس محفوظة</div>
+            <div className="our-muted" style={{ marginTop: 8 }}>
+              بانتظار تطوير F1
+            </div>
+          </div>
         </section>
 
         <section className="our-panel" style={{ marginBottom: 18 }}>
           <div className="our-row" style={{ marginBottom: 14 }}>
-            <div><h2 style={{ margin: 0, fontSize: 19 }}>أرسل مهمة تطوير</h2><div className="our-muted" style={{ marginTop: 5 }}>اكتب المطلوب، ثم جهّزه للمراجعة قبل تسليمه للوكيل.</div></div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 19 }}>أرسل مهمة تطوير</h2>
+              <div className="our-muted" style={{ marginTop: 5 }}>
+                اكتب المطلوب، ثم جهّزه للمراجعة قبل تسليمه للوكيل.
+              </div>
+            </div>
             <span className="our-muted">Arena Agent · GitHub PR</span>
           </div>
-          <textarea className="our-input" rows={4} value={prompt} onChange={e => { setPrompt(e.target.value); setNotice(''); }} placeholder="مثال: أنشئ لوحة مشاريع عربية RTL متجاوبة مع الهاتف..." />
+          <textarea
+            className="our-input"
+            rows={4}
+            value={prompt}
+            onChange={(e) => {
+              setPrompt(e.target.value);
+              setNotice('');
+            }}
+            placeholder="مثال: أنشئ لوحة مشاريع عربية RTL متجاوبة مع الهاتف..."
+          />
           <div className="our-row" style={{ marginTop: 12 }}>
             <span className="our-muted">لن يتم تشغيل وكيل أو دمج تغييرات تلقائياً من هذه الواجهة التجريبية.</span>
-            <button className="our-btn our-primary" onClick={submitTask}>تجهيز المهمة ←</button>
+            <button className="our-btn our-primary" onClick={submitTask}>
+              تجهيز المهمة ←
+            </button>
           </div>
-          {notice && <div role="status" style={{ marginTop: 12, padding: 12, borderRadius: 10, background: '#102b3d', color: '#bfdbfe', fontSize: 14 }}>{notice}</div>}
-          {sent && <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#0a1321', border: '1px solid #24334a', padding: 12, borderRadius: 10, marginTop: 12, fontSize: 12 }}>{`Repository: alsaydy654-sys/bolt.diy\nBranch: feature/our-ai-builder-f0\nTask: ${prompt.trim()}\nApproval: required\nExecution: manual Arena handoff\n`}</pre>}
+          {notice && (
+            <div
+              role="status"
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 10,
+                background: '#102b3d',
+                color: '#bfdbfe',
+                fontSize: 14,
+              }}
+            >
+              {notice}
+            </div>
+          )}
+          {sent && (
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                background: '#0a1321',
+                border: '1px solid #24334a',
+                padding: 12,
+                borderRadius: 10,
+                marginTop: 12,
+                fontSize: 12,
+              }}
+            >{`Repository: alsaydy654-sys/bolt.diy\nBranch: feature/our-ai-builder-f0\nTask: ${prompt.trim()}\nApproval: required\nExecution: manual Arena handoff\n`}</pre>
+          )}
         </section>
 
         <section className="our-panel">
           <div className="our-row" style={{ marginBottom: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 19 }}>{tab === 'projects' ? 'المشروع الحالي' : tab === 'agents' ? 'مسار الوكلاء' : 'مراجعة التغييرات'}</h2>
+            <h2 style={{ margin: 0, fontSize: 19 }}>
+              {tab === 'projects' ? 'المشروع الحالي' : tab === 'agents' ? 'مسار الوكلاء' : 'مراجعة التغييرات'}
+            </h2>
             <span className="our-muted">F0 → F1</span>
           </div>
-          {tab === 'projects' && tasks.map((task, i) => <div key={task.title} className="our-row" style={{ padding: '14px 0', borderTop: '1px solid #24334a' }}><div><div style={{ fontWeight: 600 }}>{task.title}</div><div className="our-muted" style={{ marginTop: 5 }}>{task.detail}</div></div><span className="our-muted">{task.status}</span></div>)}
-          {tab === 'agents' && <div className="our-muted" style={{ lineHeight: 1.9 }}>1. افتح فرع التطوير في Arena Agent Mode.<br/>2. أرسل المهمة مع ملف عقد F0.<br/>3. اطلب من الوكيل التعديل على فرع منفصل.<br/>4. راجع Pull Request والاختبارات قبل الدمج.</div>}
-          {tab === 'changes' && <div className="our-muted" style={{ lineHeight: 1.9 }}>التغييرات الحالية: وثيقة F0 فقط.<br/>لم يتم تعديل ملفات التطبيق الأساسية أو فرع main.<br/><a style={{ color: '#93c5fd' }} href="https://github.com/alsaydy654-sys/bolt.diy/blob/feature/our-ai-builder-f0/docs/OUR_AI_BUILDER_F0.md" target="_blank" rel="noreferrer">عرض وثيقة F0 على GitHub ↗</a></div>}
+          {tab === 'projects' &&
+            tasks.map((task) => (
+              <div key={task.title} className="our-row" style={{ padding: '14px 0', borderTop: '1px solid #24334a' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{task.title}</div>
+                  <div className="our-muted" style={{ marginTop: 5 }}>
+                    {task.detail}
+                  </div>
+                </div>
+                <span className="our-muted">{task.status}</span>
+              </div>
+            ))}
+          {tab === 'agents' && (
+            <div className="our-muted" style={{ lineHeight: 1.9 }}>
+              1. افتح فرع التطوير في Arena Agent Mode.
+              <br />
+              2. أرسل المهمة مع ملف عقد F0.
+              <br />
+              3. اطلب من الوكيل التعديل على فرع منفصل.
+              <br />
+              4. راجع Pull Request والاختبارات قبل الدمج.
+            </div>
+          )}
+          {tab === 'changes' && (
+            <div className="our-muted" style={{ lineHeight: 1.9 }}>
+              التغييرات الحالية: وثيقة F0 فقط.
+              <br />
+              لم يتم تعديل ملفات التطبيق الأساسية أو فرع main.
+              <br />
+              <a
+                style={{ color: '#93c5fd' }}
+                href="https://github.com/alsaydy654-sys/bolt.diy/blob/feature/our-ai-builder-f0/docs/OUR_AI_BUILDER_F0.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                عرض وثيقة F0 على GitHub ↗
+              </a>
+            </div>
+          )}
         </section>
-        <footer className="our-muted" style={{ textAlign: 'center', marginTop: 22 }}>OUR AI BUILDER · Prototype UI · Mobile-first · Human approval required</footer>
+        <footer className="our-muted" style={{ textAlign: 'center', marginTop: 22 }}>
+          OUR AI BUILDER · Prototype UI · Mobile-first · Human approval required
+        </footer>
       </div>
     </main>
   );
