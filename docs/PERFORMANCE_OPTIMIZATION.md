@@ -48,13 +48,19 @@ console.log(`P75: ${stats.p75}ms`);
 
 **Location**: `app/utils/frame-rate-monitor.ts`
 
-Monitors frame rate during animations and streaming to ensure smooth 60fps:
+Monitors requestAnimationFrame intervals during animations and streaming.
+
+Important metric semantics:
+- `currentFps` is calculated from observed frame intervals.
+- `droppedFrames` counts intervals that exceeded the configured frame budget in the retained sample window; it does not count physically lost display frames.
+- The dashboard labels this metric `Over-budget intervals (last 60)` to make its meaning explicit.
+- A 60 FPS target corresponds to an approximately 16.67ms frame budget.
 
 ```typescript
 import { FrameRateMonitor } from '~/utils/frame-rate-monitor';
 
 const monitor = new FrameRateMonitor(60, (fps, droppedFrames) => {
-  console.log(`Current FPS: ${fps}, Dropped: ${droppedFrames}`);
+  console.log(`Current FPS: ${fps}, Over-budget intervals: ${droppedFrames}`);
 });
 
 monitor.start();
@@ -64,7 +70,7 @@ monitor.stop();
 const stats = monitor.getStats();
 ```
 
-**React Hook**:
+**React Hook** (the `droppedFrames` property is retained for API compatibility and represents over-budget intervals):
 ```typescript
 import { useFrameRateMonitor } from '~/utils/frame-rate-monitor';
 
@@ -75,7 +81,22 @@ function StreamingMessage() {
 }
 ```
 
-### 3. Worker-Based Syntax Highlighting
+### 3. Streaming Work Budget Metrics
+
+**Location**: `app/lib/performance/streaming-optimizer.ts`
+
+Streaming work is measured by operation duration, not by actual display-frame timing.
+
+`getStats()` reports:
+- `targetFPS` - configured target used to derive the budget.
+- `frameBudget` - allowed work duration per operation.
+- `overBudgetOperations` - operations exceeding that budget.
+- `averageWorkDurationMs` - average measured operation duration.
+- `percentOverBudget` - percentage of operations exceeding the budget.
+
+Legacy fields (`droppedFrames`, `averageFrameTime`, and `percentDropped`) remain available for compatibility. They map to work-operation metrics and should not be interpreted as actual dropped display frames.
+
+### 4. Worker-Based Syntax Highlighting
 
 **Location**: 
 - `app/workers/syntax-highlighter.worker.ts` - Web worker
@@ -83,7 +104,7 @@ function StreamingMessage() {
 
 Moves expensive syntax highlighting off the main thread to prevent UI blocking during streaming.
 
-**Expected Impact**: 40-60% reduction in main thread blocking time
+**Potential Impact (Unverified)**: A 40-60% reduction in main-thread blocking time is an unvalidated target, not a measured result. Verify it with representative benchmarks.
 
 **Usage**:
 ```typescript
@@ -101,13 +122,13 @@ const html = await highlightCode(
 - Preloaded common languages (JS, TS, Python, HTML, CSS, etc.)
 - Request timeout protection (5s)
 
-### 4. Static Composer (Time-to-Typeable)
+### 5. Static Composer (Time-to-Typeable)
 
 **Location**: `app/components/chat/StaticComposer.tsx`
 
 Provides an instant-loading input field that captures user input while React loads.
 
-**Expected Impact**: 200-500ms faster time-to-typeable
+**Potential Impact (Unverified)**: A 200-500ms improvement in time-to-typeable is an unvalidated target, not a measured result. Verify it with representative benchmarks.
 
 **Implementation**:
 ```typescript
@@ -129,7 +150,7 @@ function ChatInput() {
 const staticHTML = generateStaticComposerHTML('How can Bolt help you today?');
 ```
 
-### 5. Performance Dashboard
+### 6. Performance Dashboard
 
 **Location**: `app/components/debug/PerformanceDashboard.tsx`
 
@@ -178,7 +199,7 @@ pnpm vitest bench --reporter=verbose
 
 ## Key User Journeys to Track
 
-Based on the architecture, these are the critical paths (95% of user activity):
+These are priority user journeys identified from the application architecture. Their share of total user activity has not been measured.
 
 ### 1. App Launch
 - Cold start time (web & desktop)
@@ -421,3 +442,69 @@ PerformanceMonitor.getJourneyNames().forEach(name => {
   console.log(`${name}: ${stats.p75}ms (P75)`);
 });
 ```
+
+
+## Local Performance Review Record — 2026-11-26
+
+This record documents the local validation performed in the Android Termux environment. It is not a claim of successful Linux CI execution or production-device performance.
+
+### Changes reviewed
+
+- Clarified frame-rate metric terminology in the Performance Dashboard.
+- Updated `StreamingOptimizer` metrics to distinguish work-operation duration from display-frame timing.
+- Added focused unit and integration coverage for streaming and frame-rate monitoring.
+- Updated performance tests to use the explicit work-budget metric names.
+
+### Recorded local test results
+
+The following targeted tests passed in individual or sequential local runs:
+
+| Test area | Result |
+|---|---:|
+| Full sequential Vitest suite | 709/709 |
+| Performance monitoring integration | 9/9 |
+| Streaming optimizer unit tests | 4/4 |
+| Frame-rate monitor unit tests | 12/12 |
+| Streaming performance tests | 9/9 |
+| Core journey performance tests | 10/10 |
+| Syntax highlighting performance tests | 4/4 |
+
+Type checking also passed in a previous local run.
+
+### Environment and interpretation limits
+
+- Environment: Android / Termux.
+- Dependency installation required `pnpm install --frozen-lockfile --ignore-scripts` because the `workerd` postinstall package does not support Android.
+- Some performance tests showed timing variability when run concurrently; sequential execution avoided the observed contention-related failures.
+- The simulated streaming test results are lab/test measurements, not proof of sustained real-device 60 FPS.
+- The deterministic frame-rate integration test validates the monitor's calculations against simulated 60 FPS timestamps; it is not a physical display benchmark.
+- Linux CI, production workloads, and real-device performance remain unverified by this review.
+
+## Local Performance Review Record — 2026-11-27
+
+This is a follow-up record to the 2026-11-26 review. Previous records remain unchanged.
+
+### Updated validation results
+
+| Test area | Result |
+|---|---:|
+| Full sequential Vitest suite (latest recorded full run) | 741/741 |
+| Performance monitoring integration | 9/9 |
+| Streaming optimizer unit tests | 6/6 |
+| Frame-rate monitor unit tests | 17/17 |
+| Streaming performance tests | 9/9 |
+| Core journey performance tests | 10/10 |
+| Syntax highlighting performance tests | 4/4 |
+
+The targeted test results above were obtained in separate local runs. They should not be interpreted as one combined test execution.
+
+Type checking and `git diff --check` passed in previous local validation runs.
+
+### Validation limitations
+
+- Environment: Android / Termux.
+- The full local build remains unverified because the `workerd` dependency does not support Android ARM64.
+- Linux CI execution has not yet been verified.
+- Production deployment and real-device performance have not been verified.
+- Performance test timings are local observations, not universal performance guarantees.
+- The 741/741 result is the latest recorded full-suite result, not a claim that the full suite was rerun after every subsequent targeted test.

@@ -1,13 +1,28 @@
+import { Buffer } from 'buffer';
 import { atom, map } from 'nanostores';
 import { describe, expect, it, vi } from 'vitest';
-import { FilesStore } from './files';
+import { FilesStore, type FileMap } from './files';
 import type { ArtifactState } from './workbench';
 
 vi.mock('~/lib/persistence', () => ({ description: atom(undefined) }));
 vi.mock('~/lib/webcontainer', () => ({ webcontainer: Promise.resolve({ workdir: '/home/project' }) }));
 vi.mock('./files', () => ({
   FilesStore: class {
-    files = map({});
+    files = map<FileMap>({});
+
+    getFile(filePath: string) {
+      const file = this.files.get()[filePath];
+      return file?.type === 'file' ? file : undefined;
+    }
+
+    async createFile(filePath: string, content: string | Uint8Array = '') {
+      this.files.setKey(filePath, {
+        type: 'file',
+        content: typeof content === 'string' ? content : Buffer.from(content).toString('base64'),
+        isBinary: content instanceof Uint8Array,
+      });
+    }
+
     reset() {
       return Promise.resolve();
     }

@@ -6,39 +6,37 @@
  */
 
 export class FrameRateMonitor {
-  private frames = 0;
-  private lastTime = performance.now();
+  private lifecycleVersion = 0;
   private isRunning = false;
   private rafId: number | null = null;
   private targetFps: number;
   private onUpdate?: (fps: number, droppedFrames: number) => void;
   private frameHistory: number[] = [];
-  private readonly HISTORY_SIZE = 60; // Track last 60 frames
+  private readonly HISTORY_SIZE = 60;
 
-  constructor(targetFps: number = 60, onUpdate?: (fps: number, droppedFrames: number) => void) {
+  private lastFrameTime: number | null = null;
+  private windowStart: number | null = null;
+  private windowFrames = 0;
+
+  constructor(
+    targetFps: number = 60,
+    onUpdate?: (fps: number, droppedFrames: number) => void,
+  ) {
     this.targetFps = targetFps;
     this.onUpdate = onUpdate;
   }
 
-  /**
-   * Start monitoring frame rate
-   */
   start(): void {
-    if (this.isRunning) {
-      return;
-    }
+    if (this.isRunning) return;
+    this.lifecycleVersion++;
 
     this.isRunning = true;
-    this.frames = 0;
-    this.lastTime = performance.now();
-    this.frameHistory = [];
-    this.measure();
+    this.reset();
+    this.scheduleFrame(this.lifecycleVersion);
   }
 
-  /**
-   * Stop monitoring frame rate
-   */
   stop(): void {
+    this.lifecycleVersion++;
     this.isRunning = false;
 
     if (this.rafId !== null) {
@@ -47,36 +45,25 @@ export class FrameRateMonitor {
     }
   }
 
-  /**
-   * Get current FPS
-   */
   getCurrentFps(): number {
-    if (this.frameHistory.length === 0) {
-      return 0;
-    }
+    if (this.frameHistory.length === 0) return 0;
 
-    const avgFrameTime = this.frameHistory.reduce((a, b) => a + b, 0) / this.frameHistory.length;
+    const average =
+      this.frameHistory.reduce((a, b) => a + b, 0) /
+      this.frameHistory.length;
 
-    return Math.round(1000 / avgFrameTime);
+    return average > 0 ? Math.round(1000 / average) : 0;
   }
 
-  /**
-   * Get percentage of frames that met the target budget
-   */
   getFrameBudgetCompliance(): number {
-    if (this.frameHistory.length === 0) {
-      return 100;
-    }
+    if (this.frameHistory.length === 0) return 100;
 
-    const targetFrameTime = 1000 / this.targetFps;
-    const framesInBudget = this.frameHistory.filter((t) => t <= targetFrameTime).length;
+    const budget = 1000 / this.targetFps;
+    const inBudget = this.frameHistory.filter((time) => time <= budget + 0.01).length;
 
-    return (framesInBudget / this.frameHistory.length) * 100;
+    return (inBudget / this.frameHistory.length) * 100;
   }
 
-  /**
-   * Get statistics about frame times
-   */
   getStats(): {
     currentFps: number;
     avgFrameTime: number;
@@ -96,64 +83,88 @@ export class FrameRateMonitor {
       };
     }
 
-    const targetFrameTime = 1000 / this.targetFps;
-    const avgFrameTime = this.frameHistory.reduce((a, b) => a + b, 0) / this.frameHistory.length;
-    const droppedFrames = this.frameHistory.filter((t) => t > targetFrameTime).length;
+    const average =
+      this.frameHistory.reduce((a, b) => a + b, 0) /
+      this.frameHistory.length;
+
+    const budget = 1000 / this.targetFps;
 
     return {
-      currentFps: Math.round(1000 / avgFrameTime),
-      avgFrameTime,
+      currentFps: average > 0 ? Math.round(1000 / average) : 0,
+      avgFrameTime: average,
       minFrameTime: Math.min(...this.frameHistory),
       maxFrameTime: Math.max(...this.frameHistory),
-      droppedFrames,
+      droppedFrames: this.frameHistory.filter((time) => time > budget + 0.01).length,
       budgetCompliance: this.getFrameBudgetCompliance(),
     };
   }
 
-  /**
-   * Reset all stats
-   */
   reset(): void {
-    this.frames = 0;
-    this.lastTime = performance.now();
     this.frameHistory = [];
+    this.lastFrameTime = null;
+    this.windowStart = null;
+    this.windowFrames = 0;
   }
 
-  private measure = (): void => {
-    if (!this.isRunning) {
-      return;
-    }
+  private measure = (timestamp?: number): void => {
+    if (!this.isRunning) return;
+    const lifecycleVersion = this.lifecycleVersion;
+    this.rafId = null;
 
-    this.frames++;
+    const now =
+      typeof timestamp === "number" && Number.isFinite(timestamp)
+        ? timestamp
+        : performance.now();
 
-    const now = performance.now();
-    const frameTime = now - this.lastTime;
+    if (this.lastFrameTime === null) {
+      this.lastFrameTime = now;
+      this.windowStart = now;
+    } else {
+      const frameTime = now - this.lastFrameTime;
 
-    // Track individual frame times
-    this.frameHistory.push(frameTime);
+      if (frameTime > 0 && Number.isFinite(frameTime)) {
+        this.frameHistory.push(frameTime);
 
-    if (this.frameHistory.length > this.HISTORY_SIZE) {
-      this.frameHistory.shift();
-    }
+        if (this.frameHistory.length > this.HISTORY_SIZE) {
+          this.frameHistory.shift();
+        }
 
-    // Calculate FPS every second
-    const delta = now - this.lastTime;
+        this.windowFrames++;
 
-    if (delta >= 1000) {
-      const fps = Math.round((this.frames * 1000) / delta);
-      const targetFrameTime = 1000 / this.targetFps;
-      const droppedFrames = this.frameHistory.filter((t) => t > targetFrameTime).length;
-
-      if (this.onUpdate) {
-        this.onUpdate(fps, droppedFrames);
       }
 
-      this.frames = 0;
-      this.lastTime = now;
+      this.lastFrameTime = now;
     }
 
-    this.rafId = requestAnimationFrame(this.measure);
+    if (this.windowStart !== null && now - this.windowStart >= 1000) {
+      const elapsed = now - this.windowStart;
+      const fps = Math.round((this.windowFrames * 1000) / elapsed);
+
+      const budget = 1000 / this.targetFps;
+      const droppedFrames = this.frameHistory.filter(
+        (time) => time > budget + 0.01,
+      ).length;
+      try {
+        this.onUpdate?.(fps, droppedFrames);
+      } finally {
+        if (this.isRunning && lifecycleVersion === this.lifecycleVersion) {
+          this.windowStart = now;
+          this.windowFrames = 0;
+          this.scheduleFrame(lifecycleVersion);
+        }
+      }
+      return;
+      }
+
+    this.scheduleFrame(lifecycleVersion);
   };
+
+  private scheduleFrame(lifecycleVersion: number): void {
+    this.rafId = requestAnimationFrame((timestamp) => {
+      if (!this.isRunning || lifecycleVersion !== this.lifecycleVersion) return;
+      this.measure(timestamp);
+    });
+  }
 }
 
 /**

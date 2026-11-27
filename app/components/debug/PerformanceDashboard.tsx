@@ -166,7 +166,7 @@ export function PerformanceDashboard({ onClose }: { onClose?: () => void }) {
                 <div className="text-2xl font-bold text-bolt-elements-textPrimary">{fps}</div>
               </div>
               <div>
-                <div className="text-sm text-bolt-elements-textSecondary">Dropped Frames</div>
+                <div className="text-sm text-bolt-elements-textSecondary">Over-budget intervals (last 60)</div>
                 <div className="text-2xl font-bold text-bolt-elements-textPrimary">{droppedFrames}</div>
               </div>
               <div className="flex-1">

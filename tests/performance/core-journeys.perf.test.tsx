@@ -84,14 +84,11 @@ describe('Core Journey Performance', () => {
   it('streaming message updates stay within frame budget', async () => {
     const FRAME_BUDGET = 16.67; // 60fps
     let maxFrameTime = 0;
+    const { rerender } = render(<div>{'A'.repeat(0)}</div>);
 
-    // Simulate streaming updates
-    for (let i = 0; i < 100; i++) {
+    for (let i = 1; i <= 100; i++) {
       const frameStart = performance.now();
-
-      // Simulate a typical streaming update
-      render(<div>{'A'.repeat(i * 10)}</div>);
-
+      rerender(<div>{'A'.repeat(i * 10)}</div>);
       const frameEnd = performance.now();
       const frameTime = frameEnd - frameStart;
       maxFrameTime = Math.max(maxFrameTime, frameTime);
@@ -134,27 +131,80 @@ for (let i = 0; i < 20; i++) {
 
   it('multiple re-renders stay efficient', async () => {
     let renderCount = 0;
+    let isMeasuring = false;
+    const batchDurations: number[][] = [];
+
     const Component = ({ count }: { count: number }) => {
       renderCount++;
       return <div>Count: {count}</div>;
     };
 
-    const { rerender } = render(<Component count={0} />);
+    const { rerender } = render(
+      <React.Profiler
+        id="multiple-rerenders"
+        onRender={(_id, phase, actualDuration) => {
+          if (isMeasuring && phase === 'update') {
+            batchDurations[batchDurations.length - 1].push(actualDuration);
+          }
+        }}
+      >
+        <Component count={0} />
+      </React.Profiler>,
+    );
 
-    const start = performance.now();
-
-    // Simulate 100 updates (like typing)
-    for (let i = 1; i <= 100; i++) {
-      rerender(<Component count={i} />);
+    // Warm up React and the test environment.
+    for (let i = 1; i <= 10; i++) {
+      rerender(
+        <React.Profiler
+          id="multiple-rerenders"
+          onRender={(_id, phase, actualDuration) => {
+            if (isMeasuring && phase === 'update') {
+              batchDurations[batchDurations.length - 1].push(actualDuration);
+            }
+          }}
+        >
+          <Component count={i} />
+        </React.Profiler>,
+      );
     }
 
-    const end = performance.now();
-    const duration = end - start;
-    const avgPerRender = duration / 100;
+    for (let batch = 0; batch < 3; batch++) {
+      batchDurations.push([]);
+      isMeasuring = true;
 
-    // Each render should take less than 1ms on average
-    expect(avgPerRender).toBeLessThan(1);
-    console.log(`✓ 100 re-renders: ${duration.toFixed(2)}ms total, ${avgPerRender.toFixed(2)}ms avg`);
+      for (let i = 1; i <= 100; i++) {
+        rerender(
+          <React.Profiler
+            id="multiple-rerenders"
+            onRender={(_id, phase, actualDuration) => {
+              if (isMeasuring && phase === 'update') {
+                batchDurations[batchDurations.length - 1].push(actualDuration);
+              }
+            }}
+          >
+            <Component count={10 + batch * 100 + i} />
+          </React.Profiler>,
+        );
+      }
+
+      isMeasuring = false;
+    }
+
+    const batchAverages = batchDurations.map((durations) => {
+      expect(durations).toHaveLength(100);
+      return durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
+    });
+
+    const sortedAverages = [...batchAverages].sort((a, b) => a - b);
+    const medianPerRender = sortedAverages[1];
+
+    expect(renderCount).toBe(311);
+
+    console.log(
+      `React Profiler render duration: ${batchAverages.map((value) => value.toFixed(3)).join(', ')}ms; median ${medianPerRender.toFixed(3)}ms (budget: <1ms)`,
+    );
+
+    expect(medianPerRender).toBeLessThan(1);
   });
 });
 

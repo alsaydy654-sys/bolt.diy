@@ -58,7 +58,7 @@ class StreamingOptimizer {
 
     if (didDrop && import.meta.env.DEV) {
       console.warn(
-        `[STREAMING] Frame ${this._frameCount} dropped: ${workDuration.toFixed(2)}ms (budget: ${this._frameBudget}ms)`,
+        `[STREAMING] Work operation ${this._frameCount} exceeded budget: ${workDuration.toFixed(2)}ms (budget: ${this._frameBudget}ms)`,
       );
     }
   }
@@ -69,24 +69,33 @@ class StreamingOptimizer {
   getStats(): {
     targetFPS: number;
     frameBudget: number;
+    overBudgetOperations: number;
+    averageWorkDurationMs: number;
+    percentOverBudget: number;
+    /** @deprecated Measures over-budget work operations, not dropped screen frames. */
     droppedFrames: number;
+    /** @deprecated Average work-operation duration, not screen frame time. */
     averageFrameTime: number;
+    /** @deprecated Percentage of work operations exceeding the budget, not dropped frames. */
     percentDropped: number;
   } {
-    const droppedFrames = this._frameMetrics.filter((m) => m.didDrop).length;
-
-    const averageFrameTime =
+    const overBudgetOperations = this._frameMetrics.filter((m) => m.didDrop).length;
+    const averageWorkDurationMs =
       this._frameMetrics.reduce((sum, m) => sum + m.duration, 0) / this._frameMetrics.length || 0;
+    const percentOverBudget =
+      (overBudgetOperations / this._frameMetrics.length) * 100 || 0;
 
     return {
       targetFPS: this._targetFPS,
       frameBudget: this._frameBudget,
-      droppedFrames,
-      averageFrameTime,
-      percentDropped: (droppedFrames / this._frameMetrics.length) * 100 || 0,
+      overBudgetOperations,
+      averageWorkDurationMs,
+      percentOverBudget,
+      droppedFrames: overBudgetOperations,
+      averageFrameTime: averageWorkDurationMs,
+      percentDropped: percentOverBudget,
     };
   }
-
   /**
    * Reset metrics
    */
@@ -119,6 +128,7 @@ export const streamingOptimizer = new StreamingOptimizer();
 export class BatchedDOMUpdater {
   private _pendingUpdates: Array<() => void> = [];
   private _rafId: number | null = null;
+  private _isFlushing = false;
 
   /**
    * Schedule a DOM update
@@ -126,7 +136,7 @@ export class BatchedDOMUpdater {
   schedule(update: () => void): void {
     this._pendingUpdates.push(update);
 
-    if (this._rafId === null) {
+    if (this._rafId === null && !this._isFlushing) {
       this._rafId = requestAnimationFrame(() => this._flush());
     }
   }
@@ -136,25 +146,33 @@ export class BatchedDOMUpdater {
    */
   private _flush(): void {
     this._rafId = null;
+    if (this._isFlushing) return;
 
+    this._isFlushing = true;
     const frameStart = performance.now();
     const budget = streamingOptimizer.getRemainingBudget(0);
 
-    // let _updateCount = 0;
+    try {
+      while (
+        this._pendingUpdates.length > 0 &&
+        performance.now() - frameStart < budget * 0.8
+      ) {
+        const update = this._pendingUpdates.shift()!;
+        update();
+      }
+    } finally {
+      const duration = performance.now() - frameStart;
 
-    while (this._pendingUpdates.length > 0 && performance.now() - frameStart < budget * 0.8) {
-      const update = this._pendingUpdates.shift()!;
-      update();
+      try {
+        streamingOptimizer.trackFrame(duration);
+      } finally {
+        this._isFlushing = false;
 
-      // _updateCount++;
-    }
-
-    const duration = performance.now() - frameStart;
-    streamingOptimizer.trackFrame(duration);
-
-    // If there are still pending updates, schedule another frame
-    if (this._pendingUpdates.length > 0) {
-      this._rafId = requestAnimationFrame(() => this._flush());
+        // Schedule one follow-up frame only when updates remain.
+        if (this._pendingUpdates.length > 0 && this._rafId === null) {
+          this._rafId = requestAnimationFrame(() => this._flush());
+        }
+      }
     }
   }
 
